@@ -205,51 +205,6 @@ func (c *Client) refreshRobotsCache(domainRoot string, entry *RobotsCacheEntry) 
 	}
 }
 
-func (c *Client) CheckLinkNotVisited(link, linkType string) bool {
-	var platform string
-	if strings.HasPrefix(link, "N") {
-		platform = "naverblog"
-	} else if strings.HasPrefix(link, "T") {
-		platform = "tistory"
-	} else {
-		return false
-	}
-
-	targetURL := fmt.Sprintf("%s/%s/%s/%s", c.cfg.LinkKVEndpoint, linkType, platform, link[1:])
-	_, statusCode, err := c.DoRequest("GET", targetURL, nil, nil)
-	if err != nil {
-		return false
-	}
-
-	return statusCode == 404
-}
-
-func (c *Client) RegisterLink(link, linkType string) bool {
-	var platform string
-	if strings.HasPrefix(link, "N") {
-		platform = "naverblog"
-	} else if strings.HasPrefix(link, "T") {
-		platform = "tistory"
-	} else {
-		return false
-	}
-
-	payloadMap := map[string]string{
-		"blog_platform": platform,
-		"user_id":       link[1:],
-	}
-	payloadBytes, _ := json.Marshal(payloadMap)
-
-	targetURL := fmt.Sprintf("%s/%s", c.cfg.LinkKVEndpoint, linkType)
-	headers := map[string]string{"Content-Type": "application/json"}
-	_, statusCode, err := c.DoRequest("POST", targetURL, headers, payloadBytes)
-	if err != nil {
-		return false
-	}
-
-	return statusCode == 201
-}
-
 func (c *Client) PostHTMLContent(id, blogType, htmlBody string, timestamp int64) error {
 	if htmlBody == "" {
 		return nil

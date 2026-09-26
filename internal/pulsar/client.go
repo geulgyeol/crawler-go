@@ -16,7 +16,8 @@ type Client struct {
 
 func NewClient(cfg *config.Config) (*Client, error) {
 	opts := pulsar.ClientOptions{
-		URL: cfg.PulsarServiceURL,
+		URL:                        cfg.PulsarServiceURL,
+		TLSAllowInsecureConnection: true,
 	}
 
 	pClient, err := pulsar.NewClient(opts)
@@ -41,9 +42,6 @@ func (c *Client) CreateProducer(topic string) (pulsar.Producer, error) {
 	producerOptions := pulsar.ProducerOptions{
 		Topic:              fullTopic,
 		MaxPendingMessages: c.cfg.MaxMessageQueueSize,
-		//BatchingMaxPublishDelay: time.Duration(c.cfg.MaxBatchingDelay) * time.Millisecond,
-		//BatchingMaxMessages:     uint(c.cfg.MaxBatchingMessageCount),
-		DisableBatching: true,
 	}
 
 	producer, err := c.pulsarClient.CreateProducer(producerOptions)

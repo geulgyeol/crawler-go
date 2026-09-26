@@ -13,12 +13,10 @@ type Config struct {
 	UserAgentPrefix            string         `yaml:"user_agent.prefix"`
 	UserAgentSuffix            string         `yaml:"user_agent.suffix"`
 	UserAgent                  string         `yaml:"-"`
-	LinkKVEndpoint             string         `yaml:"link_kv_endpoint"`
 	HTMLBundlerEndpoint        string         `yaml:"html_bundler_endpoint"`
 	PulsarServiceURL           string         `yaml:"pulsar_service_url"`
 	PulsarNamespace            string         `yaml:"pulsar_namespace"`
 	MaxConcurrentRequests      int            `yaml:"max_concurrent_requests"`
-	BodiesThreshold            int            `yaml:"bodies_threshold"`
 	NaverTimeoutWaitingTime    int            `yaml:"naver_timeout_waiting_time"`
 	ConnectingTimeoutSeconds   int            `yaml:"connecting_timeout_seconds"`
 	ResponseTimeoutSeconds     int            `yaml:"response_timeout_seconds"`
@@ -38,12 +36,10 @@ type yamlRawConfig struct {
 		Prefix string `yaml:"prefix"`
 		Suffix string `yaml:"suffix"`
 	} `yaml:"user_agent"`
-	LinkKVEndpoint             string         `yaml:"link_kv_endpoint"`
 	HTMLBundlerEndpoint        string         `yaml:"html_bundler_endpoint"`
 	PulsarServiceURL           string         `yaml:"pulsar_service_url"`
 	PulsarNamespace            string         `yaml:"pulsar_namespace"`
 	MaxConcurrentRequests      int            `yaml:"max_concurrent_requests"`
-	BodiesThreshold            int            `yaml:"bodies_threshold"`
 	NaverTimeoutWaitingTime    int            `yaml:"naver_timeout_waiting_time"`
 	ConnectingTimeoutSeconds   int            `yaml:"connecting_timeout_seconds"`
 	ResponseTimeoutSeconds     int            `yaml:"response_timeout_seconds"`
@@ -98,12 +94,10 @@ func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		CrawlerName:                raw.CrawlerName,
 		UserAgent:                  raw.UserAgent.Prefix + raw.CrawlerName + raw.UserAgent.Suffix,
-		LinkKVEndpoint:             raw.LinkKVEndpoint,
 		HTMLBundlerEndpoint:        raw.HTMLBundlerEndpoint,
 		PulsarServiceURL:           raw.PulsarServiceURL,
 		PulsarNamespace:            raw.PulsarNamespace,
 		MaxConcurrentRequests:      raw.MaxConcurrentRequests,
-		BodiesThreshold:            raw.BodiesThreshold,
 		NaverTimeoutWaitingTime:    raw.NaverTimeoutWaitingTime,
 		ConnectingTimeoutSeconds:   raw.ConnectingTimeoutSeconds,
 		ResponseTimeoutSeconds:     raw.ResponseTimeoutSeconds,

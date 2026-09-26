@@ -1,15 +1,13 @@
 ﻿crawler_name: "geulgyeol-crawler"
-user_agent: 
-    prefix: "Mozilla/5.0 (X11; Linux x86_64; rv:146.0; compatible; "
-    suffix: "/2.0; +https://github.com/geulgyeol) Gecko/20100101 Firefox/145.0"
+user_agent:
+  prefix: "Mozilla/5.0 (X11; Linux x86_64; rv:156.0; compatible; "
+  suffix: "/2.0; +https://github.com/geulgyeol) Gecko/20100101 Firefox/156.0"
 
-link_kv_endpoint: "http://localhost:8082"                                    # link-kv.default.svc.cluster.local
-html_bundler_endpoint: "http://localhost:8081"                               # html-precompressor.default.svc.cluster.local
-pulsar_service_url: "pulsar://localhost:6650"      # pulsar+ssl://pulsar.tail372bfc.ts.net:6651, pulsar://localhost:6650
-pulsar_namespace: "persistent://public/split/"
+html_bundler_endpoint: "http://localhost:8081"
+pulsar_service_url: "pulsar+ssl://pulsar.tail372bfc.ts.net:6651" # pulsar+ssl://pulsar.tail372bfc.ts.net:6651, pulsar://localhost:6650
+pulsar_namespace: "persistent://public/geulgyeol/"
 
 max_concurrent_requests: 10
-bodies_threshold: 100
 
 naver_timeout_waiting_time: 60000
 
@@ -26,14 +24,14 @@ max_robots_cache_size: 100
 
 verbose: false
 
-log_level: "ERROR"                                                  # INFO, DEBUG, WARN, ERROR
+log_level: "WARN" # INFO, DEBUG, WARN, ERROR
 
 crawl_per_second_map:
-    LinkFinder_N: 10
-    LinkFinder_T: 10
-    ProfileFinder_N: 4
-    ProfileFinder_T: 6
-    HTMLCrawler_N: 5
-    HTMLCrawler_T: 10
-    ImageDownloader_N: 5
-    ImageDownloader_T: 5
+  LinkFinder_N: 10
+  LinkFinder_T: 10
+  ProfileFinder_N: 4
+  ProfileFinder_T: 6
+  HTMLCrawler_N: 5
+  HTMLCrawler_T: 10
+  ImageDownloader_N: 5
+  ImageDownloader_T: 5

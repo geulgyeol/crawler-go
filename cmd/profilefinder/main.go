@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"crawler/db"
 	"crawler/internal/config"
 	"crawler/internal/crawler"
 	"crawler/internal/pulsar"
+	userreg "crawler/internal/users"
 
 	pulsarClient "github.com/apache/pulsar-client-go/pulsar"
 )
@@ -23,6 +25,12 @@ func main() {
 	}
 
 	cClient := crawler.NewClient(cfg)
+	pool, err := userreg.Open(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
+	}
+	defer pool.Close()
+	userQueries := db.New(pool)
 
 	pClient, err := pulsar.NewClient(cfg)
 	if err != nil {
@@ -62,17 +70,17 @@ func main() {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		runNaverLoop(ctx, cfg, cClient, consumerNaver, userProducerNaver)
+		runNaverLoop(ctx, cfg, cClient, userQueries, consumerNaver, userProducerNaver)
 	}()
 	go func() {
 		defer wg.Done()
-		runTistoryLoop(ctx, cfg, cClient, consumerTistory, userProducerTistory)
+		runTistoryLoop(ctx, cfg, cClient, userQueries, consumerTistory, userProducerTistory)
 	}()
 
 	wg.Wait()
 }
 
-func runNaverLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Client, consumer pulsarClient.Consumer, userProducer pulsarClient.Producer) {
+func runNaverLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Client, users *db.Queries, consumer pulsarClient.Consumer, userProducer pulsarClient.Producer) {
 	for {
 		msg, err := consumer.Receive(ctx)
 		if err != nil {
@@ -96,8 +104,12 @@ func runNaverLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Clie
 		profileName := payload[1:slashIdx]
 		writingNumber := payload[slashIdx+1:]
 
-		userIDs, processErr := handleNaverSympathy(cfg, cClient, profileName, writingNumber)
+		userIDs, processErr := handleNaverSympathy(ctx, cfg, cClient, users, profileName, writingNumber)
 		if processErr != nil {
+			// Earlier users have already been claimed in PostgreSQL. Publish
+			// them before retrying the remaining users on redelivery.
+			sendMessages(ctx, userProducer, userIDs)
+			fmt.Printf("[Naver] User registration failed: %v\n", processErr)
 			consumer.Nack(msg)
 			continue
 		}
@@ -109,7 +121,7 @@ func runNaverLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Clie
 	}
 }
 
-func runTistoryLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Client, consumer pulsarClient.Consumer, userProducer pulsarClient.Producer) {
+func runTistoryLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Client, users *db.Queries, consumer pulsarClient.Consumer, userProducer pulsarClient.Producer) {
 	for {
 		msg, err := consumer.Receive(ctx)
 		if err != nil {
@@ -133,8 +145,10 @@ func runTistoryLoop(ctx context.Context, cfg *config.Config, cClient *crawler.Cl
 		profileName := payload[1:slashIdx]
 		writingNumber := payload[slashIdx+1:]
 
-		userIDs, processErr := handleTistoryComment(cfg, cClient, profileName, writingNumber)
+		userIDs, processErr := handleTistoryComment(ctx, cfg, cClient, users, profileName, writingNumber)
 		if processErr != nil {
+			sendMessages(ctx, userProducer, userIDs)
+			fmt.Printf("[Tistory] User registration failed: %v\n", processErr)
 			consumer.Nack(msg)
 			continue
 		}
@@ -154,7 +168,7 @@ func sendMessages(ctx context.Context, producer pulsarClient.Producer, messages 
 	}
 }
 
-func handleNaverSympathy(cfg *config.Config, client *crawler.Client, profileName, writingNumber string) ([]string, error) {
+func handleNaverSympathy(ctx context.Context, cfg *config.Config, client *crawler.Client, users *db.Queries, profileName, writingNumber string) ([]string, error) {
 	fmt.Printf("[Naver] Start to process \"N%s/%s\"\n", profileName, writingNumber)
 
 	targetURL := fmt.Sprintf("https://blog.naver.com/api/blogs/%s/posts/%s/sympathy-users?itemCount=100&timeStamp=9999999999999", profileName, writingNumber)
@@ -178,17 +192,19 @@ func handleNaverSympathy(cfg *config.Config, client *crawler.Client, profileName
 	userIDs := make([]string, 0, len(matches))
 	for _, match := range matches {
 		userID := "N" + match[1]
-		if client.CheckLinkNotVisited(userID, "users") {
-			if client.RegisterLink(userID, "users") {
-				userIDs = append(userIDs, userID)
-			}
+		inserted, err := userreg.Register(ctx, users, userID)
+		if err != nil {
+			return userIDs, err
+		}
+		if inserted {
+			userIDs = append(userIDs, userID)
 		}
 	}
 
 	return userIDs, nil
 }
 
-func handleTistoryComment(cfg *config.Config, client *crawler.Client, profileName, writingNumber string) ([]string, error) {
+func handleTistoryComment(ctx context.Context, cfg *config.Config, client *crawler.Client, users *db.Queries, profileName, writingNumber string) ([]string, error) {
 	fmt.Printf("[Tistory] Start to process \"T%s/%s\"\n", profileName, writingNumber)
 
 	targetURL := fmt.Sprintf("https://%s.tistory.com/m/api/%s/comment", profileName, writingNumber)
@@ -216,11 +232,12 @@ func handleTistoryComment(cfg *config.Config, client *crawler.Client, profileNam
 
 		subDomain := strings.Split(fullHost, ".")[0]
 		userID := "T" + subDomain
-
-		if client.CheckLinkNotVisited(userID, "users") {
-			if client.RegisterLink(userID, "users") {
-				userIDs = append(userIDs, userID)
-			}
+		inserted, err := userreg.Register(ctx, users, userID)
+		if err != nil {
+			return userIDs, err
+		}
+		if inserted {
+			userIDs = append(userIDs, userID)
 		}
 	}
 

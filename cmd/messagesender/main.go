@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"crawler/db"
 	"crawler/internal/config"
-	"crawler/internal/crawler"
 	"crawler/internal/pulsar"
+	"crawler/internal/users"
 
 	pulsarClient "github.com/apache/pulsar-client-go/pulsar"
 )
@@ -21,7 +22,7 @@ func main() {
 		log.Fatalf("Failed to load config file: %v\n", err)
 	}
 
-	cClient := crawler.NewClient(cfg)
+	var userQueries *db.Queries
 
 	pClient, err := pulsar.NewClient(cfg)
 	if err != nil {
@@ -58,7 +59,7 @@ func main() {
 	fmt.Println("Topics: user, profile, content, image")
 	fmt.Println("Format : [topic] [N or T][Profile Name(/Number)] ...")
 	fmt.Println("ex) user Nhello")
-	fmt.Println("ex) profile TWorld/1233\n")
+	fmt.Println("ex) profile TWorld/1233")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	ctx := context.Background()
@@ -115,11 +116,15 @@ func main() {
 			}
 			fmt.Println("Sent image messages.")
 		} else {
-			linkType := "posts"
-			if topic == "user" {
-				linkType = "users"
+			if topic == "user" && userQueries == nil {
+				pool, err := users.Open(ctx)
+				if err != nil {
+					fmt.Printf("Failed to connect to PostgreSQL: %v\n", err)
+					continue
+				}
+				defer pool.Close()
+				userQueries = db.New(pool)
 			}
-
 			for _, m := range messages {
 				blogType, ok := blogTypeOf(m)
 				if !ok {
@@ -127,15 +132,19 @@ func main() {
 					continue
 				}
 
-				if cClient.CheckLinkNotVisited(m, linkType) {
-					if topic == "user" {
-						cClient.RegisterLink(m, "users")
+				if topic == "user" {
+					inserted, err := users.Register(ctx, userQueries, m)
+					if err != nil {
+						fmt.Printf("%s: Database error: %v\n", m, err)
+						continue
 					}
-					topicProducers[blogType].SendAsync(ctx, &pulsarClient.ProducerMessage{Payload: []byte(m)}, func(id pulsarClient.MessageID, msg *pulsarClient.ProducerMessage, err error) {})
-					fmt.Printf("Sent: %s\n", m)
-				} else {
-					fmt.Printf("%s: Already visited or Connect Failed\n", m)
+					if !inserted {
+						fmt.Printf("%s: User already registered\n", m)
+						continue
+					}
 				}
+				topicProducers[blogType].SendAsync(ctx, &pulsarClient.ProducerMessage{Payload: []byte(m)}, func(id pulsarClient.MessageID, msg *pulsarClient.ProducerMessage, err error) {})
+				fmt.Printf("Sent: %s\n", m)
 			}
 		}
 	}
