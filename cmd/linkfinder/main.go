@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +14,7 @@ import (
 	"crawler/internal/crawler"
 	"crawler/internal/pulsar"
 
+	"github.com/PuerkitoBio/goquery"
 	pulsarClient "github.com/apache/pulsar-client-go/pulsar"
 )
 
@@ -187,72 +188,68 @@ func processNaverBlog(cfg *config.Config, client *crawler.Client, blogName strin
 	return validPages, true
 }
 
+var postIDRe = regexp.MustCompile(`^(?:https?://[^/]+)?/(\d+)/?(?:[?#].*)?$`)
+
 func processTistoryBlog(cfg *config.Config, client *crawler.Client, blogName string) ([]string, bool) {
 	fmt.Printf("[Tistory] Start to process \"T%s\"\n", blogName)
 
-	rssURL := fmt.Sprintf("https://%s.tistory.com/rss", blogName)
-	if !client.IsAllowedByRobots(rssURL) {
-		return nil, true
-	}
-
-	body, statusCode, err := client.DoRequest("GET", rssURL, nil, nil)
-	if err != nil || statusCode >= 400 {
-		return nil, false
-	}
-
-	re := regexp.MustCompile(`<link>https://[^/]+/([0-9]+)</link>`)
-	match := re.FindStringSubmatch(string(body))
-	if len(match) < 2 {
-		return nil, true
-	}
-
-	maxIndex, _ := strconv.Atoi(match[1])
-	if maxIndex == 0 {
-		return nil, true
-	}
-
-	var validPages []string
-	var mu sync.Mutex
-	emptyPageCnt := 0
 	delay := time.Duration(1000/cfg.CrawlPerSecondMap["LinkFinder_T"]) * time.Millisecond
 
-	sem := make(chan struct{}, cfg.MaxConcurrentRequests)
+	var validPages []string
+	seen := make(map[string]struct{})
 
-	for currentIndex := maxIndex; currentIndex > 0; currentIndex-- {
-		mu.Lock()
-		if emptyPageCnt >= 20 {
-			mu.Unlock()
+	for page := 1; ; page++ {
+		url := fmt.Sprintf("https://%s.tistory.com/?page=%d", blogName, page)
+		if !client.IsAllowedByRobots(url) {
+			return nil, true
+		}
+
+		body, statusCode, err := client.DoRequest("GET", url, nil, nil)
+		if err != nil || statusCode >= 400 {
+			return nil, false
+		}
+
+		doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, false
+		}
+
+		items := doc.Find(".post-item")
+		if items.Length() == 0 {
 			break
 		}
-		mu.Unlock()
 
-		sem <- struct{}{}
+		newCount := 0
+		items.Each(func(i int, s *goquery.Selection) {
+			link, exists := s.Find("a").Attr("href")
+			if !exists {
+				return
+			}
+
+			m := postIDRe.FindStringSubmatch(link)
+			if m == nil {
+				return
+			}
+
+			id := m[1]
+			if _, dup := seen[id]; dup {
+				return
+			}
+			seen[id] = struct{}{}
+
+			validPages = append(validPages, fmt.Sprintf("T%s/%s", blogName, id))
+			newCount++
+		})
+
+		if newCount == 0 {
+			break
+		}
+
+		if len(validPages)%100 < newCount {
+			fmt.Printf("[Tistory] %s: %d pages found so far\n", blogName, len(validPages))
+		}
+
 		time.Sleep(delay)
-
-		go func(idx int) {
-			defer func() { <-sem }()
-
-			postURL := fmt.Sprintf("https://%s.tistory.com/%d", blogName, idx)
-			if !client.IsAllowedByRobots(postURL) {
-				return
-			}
-
-			headers := map[string]string{"Range": "bytes=0-256"}
-			_, code, err := client.DoRequest("GET", postURL, headers, nil)
-			if err != nil || code >= 400 {
-				emptyPageCnt++
-				return
-			}
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			emptyPageCnt = 0
-			validPages = append(validPages, fmt.Sprintf("T%s/%d", blogName, idx))
-			if len(validPages)%100 == 0 {
-				fmt.Printf("[Tistory] %s: %d pages found so far\n", blogName, len(validPages))
-			}
-		}(currentIndex)
 	}
 
 	return validPages, true
