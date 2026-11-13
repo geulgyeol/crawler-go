@@ -91,14 +91,12 @@ func main() {
 			return
 		}
 
-		dbCheckLink := strings.Replace(targetLink, "/", "%20", 1)
-
 		logPrefix := "[Naver]"
 		if blogType == "tistory" {
 			logPrefix = "[Tistory]"
 		}
 
-		if err := cClient.PostHTMLContent(dbCheckLink[1:], blogType, string(bodyBytes), time.Now().Unix()); err != nil {
+		if err := cClient.PostHTMLContent(reqURL, blogType, string(bodyBytes), time.Now().Unix()); err != nil {
 			fmt.Printf("%s error: %v, link: %s\n", logPrefix, err, targetLink)
 			consumer.Nack(msg)
 			return

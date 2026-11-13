@@ -205,16 +205,18 @@ func (c *Client) refreshRobotsCache(domainRoot string, entry *RobotsCacheEntry) 
 	}
 }
 
-func (c *Client) PostHTMLContent(id, blogType, htmlBody string, timestamp int64) error {
+func (c *Client) PostHTMLContent(pageURL, blogType, htmlBody string, timestamp int64) error {
 	if htmlBody == "" {
 		return nil
 	}
 
 	payload := struct {
+		URL       string `json:"url"`
 		Body      string `json:"body"`
 		Blog      string `json:"blog"`
 		Timestamp int64  `json:"timestamp"`
 	}{
+		URL:       pageURL,
 		Body:      htmlBody,
 		Blog:      blogType,
 		Timestamp: timestamp,
@@ -225,7 +227,7 @@ func (c *Client) PostHTMLContent(id, blogType, htmlBody string, timestamp int64)
 		return err
 	}
 
-	targetURL := fmt.Sprintf("%s/%s", c.cfg.HTMLBundlerEndpoint, id)
+	targetURL := strings.TrimRight(c.cfg.HTMLBundlerEndpoint, "/") + "/"
 	headers := map[string]string{"Content-Type": "application/json"}
 
 	_, statusCode, err := c.DoRequest("POST", targetURL, headers, payloadBytes)
