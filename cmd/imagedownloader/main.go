@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -45,10 +46,46 @@ func getExtension(contentType string) string {
 	return ".bin"
 }
 
+// normalizeURL: net/url로 파싱해서 쿼리스트링(search param)과 프래그먼트를 모두 제거한다.
+// http/https가 아니거나 호스트가 없으면 에러를 반환한다.
+func normalizeURL(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("지원하지 않는 scheme: %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", errors.New("호스트가 없음")
+	}
+
+	u.RawQuery = ""
+	u.ForceQuery = false // 끝에 남는 '?' 제거
+	u.Fragment = ""
+	u.RawFragment = ""
+	return u.String(), nil
+}
+
+// toASCII: S3 사용자 메타데이터는 HTTP 헤더로 전달되므로 ASCII만 허용된다.
+// 비ASCII 바이트(한글 등)는 퍼센트 인코딩한다.
+func toASCII(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c > 0x7e {
+			fmt.Fprintf(&b, "%%%02X", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
 // objectKey: 다운로드 전에 HeadObject를 하려면 Content-Type(확장자)을 모르는 상태에서
-// 키가 정해져야 하므로, URL의 sha256 해시를 키로 사용한다. (같은 URL → 항상 같은 키)
-func objectKey(prefix, imgURL string) string {
-	sum := sha256.Sum256([]byte(imgURL))
+// 키가 정해져야 하므로, (쿼리를 제거한) URL의 sha256 해시를 키로 사용한다.
+func objectKey(prefix, normalizedURL string) string {
+	sum := sha256.Sum256([]byte(normalizedURL))
 	return prefix + hex.EncodeToString(sum[:])
 }
 
@@ -72,8 +109,6 @@ func objectExists(ctx context.Context, client *s3.Client, bucket, key string) (b
 	return false, err
 }
 
-// downloader: 네이버/티스토리 루프가 공유하는 의존성.
-// s3.Client와 http.Client는 동시 사용이 안전하다.
 type downloader struct {
 	cfg        *config.Config
 	s3Client   *s3.Client
@@ -82,7 +117,13 @@ type downloader struct {
 	prefix     string
 }
 
-func (d *downloader) handle(ctx context.Context, label, imgURL string) bool {
+func (d *downloader) handle(ctx context.Context, label, rawURL string) bool {
+	imgURL, err := normalizeURL(rawURL)
+	if err != nil {
+		log.Printf("[%s] URL 파싱 실패, 건너뜀 (%s): %v\n", label, rawURL, err)
+		return true
+	}
+
 	key := objectKey(d.prefix, imgURL)
 
 	exists, err := objectExists(ctx, d.s3Client, d.bucket, key)
@@ -125,6 +166,9 @@ func (d *downloader) handle(ctx context.Context, label, imgURL string) bool {
 		Key:         &key,
 		Body:        bytes.NewReader(data),
 		ContentType: &ct,
+		Metadata: map[string]string{
+			"source-url": toASCII(rawURL),
+		},
 	})
 	if err != nil {
 		log.Printf("[%s] PutObject 실패 (%s): %v\n", label, key, err)
@@ -143,23 +187,19 @@ func runLoop(ctx context.Context, label string, consumer pulsarClient.Consumer, 
 			continue
 		}
 
-		imgURL := string(msg.Payload())
-		if imgURL == "" {
+		payload := string(msg.Payload())
+		if payload == "" {
 			consumer.Ack(msg)
 			continue
 		}
 
-		if strings.HasPrefix(imgURL, "N") {
-			//blogType = "naver"
-		} else if strings.HasPrefix(imgURL, "T") {
-			//blogType = "tistory"
-		} else {
+		if !strings.HasPrefix(payload, "N") && !strings.HasPrefix(payload, "T") {
 			consumer.Ack(msg)
 			continue
 		}
-		imgURL = imgURL[1:]
+		rawURL := payload[1:]
 
-		if d.handle(ctx, label, imgURL) {
+		if d.handle(ctx, label, rawURL) {
 			consumer.Ack(msg)
 		} else {
 			consumer.Nack(msg)
